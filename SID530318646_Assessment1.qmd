@@ -1,0 +1,528 @@
+---
+title: "Discipline Assessment 1 - Reef"
+author: "530318646"
+date: today
+repository: https://github.sydney.edu.au/ilat8407/DATA3888-discipline-1.git
+format: 
+  html:
+    embed-resources: true
+    code-fold: true
+    code-tools: true
+    theme: sandstone
+    fig_caption: yes
+    table-of-contents: true
+    toc: true
+    toc_depth: 4
+    toc_float: true
+execute:
+  echo: true
+  tidy: true
+number-sections: false
+bibliography: refs.bib
+---
+
+```{r setup, message=FALSE}
+library(tidyverse)
+library(tidyr)
+library(ggplot2)
+library(viridis)
+library(cvTools)
+library(dplyr)
+library(plotly)
+library(lubridate)
+library(ncdf4)
+library(CFtime)
+library(sf)
+library(caret)
+library(randomForest)
+library(reshape2)
+library(RColorBrewer)
+library(car)
+library(kableExtra)
+# knitr::write_bib(c(.packages(),
+#                    "tidyverse", "ggplot2","dplyr", "plotly", "viridis",
+#                    "cvTools", "lubridate", "ncdf4", "CFtime", "sf", "caret",
+#                    "randomForest", "reshape2", "RColorBrewer", "car", "kableExtra"), "refs.bib")
+```
+
+# Part 1
+
+Hi Wei! I heard you've recently been wrapped up with researching a recent global coral bleaching phenomenon and that you're hoping to study the environmental variables that may have triggered these unfortunate events.
+
+I've actually recently come across this public dataset recording the bleaching events at 3351 locations in 81 countries between 1998-2017, created by our friend Sully and colleagues [@sully2019global]. I was also having a look at the paper they published on this data, particularly this bold claim:
+
+> "The highest probability of coral bleaching occurred at tropical midlatitude sites (15–20 degrees north and south of the Equator).”
+
+So, according to them, coral reefs within these specified regions had a higher likelihood of coral bleaching, represented as `Average_Bleaching (%)` in their data. The implications are quite significant, so I want to explore this using their data because, particularly data from 2015-2017.
+
+## Approach
+
+::: panel-tabset
+### Data Preprocessing
+
+All coding was done in *R Version 4.4.1* [@R-base]. Additionally, data cleaning, modelling and visualisations were done using a combination of *Base R* and functions from the following packages;
+
+-   *tidyverse* [@R-tidyverse]
+-   *viridis* [@R-viridis]
+-   *ggplot2* [@R-ggplot2]
+-   *plotly* [@R-plotly]
+-   *caret* [@R-caret]
+-   *CFtime* [@R-CFtime]
+-   *cvTools* [@R-cvTools]
+-   *dplyr* [@R-dplyr]
+-   *lubridate* [@R-lubridate]
+-   *ncdf4* [@R-ncdf4]
+-   *randomForest* [@R-randomForest]
+-   *sf* [@R-sf]
+-   *stringr* [@R-stringr]
+-   *tidyr* [@R-tidyr]
+
+```{r, message=FALSE}
+# read in csv data files
+reefCheck <- read_csv("Reef_Check_with_cortad_variables_with_annual_rate_of_SST_change.csv")
+
+# # check structure & stuff
+# str(reefCheck)
+# dim(reefCheck)
+# head(reefCheck)
+
+# data variables cleaning & reformatting
+reef = reefCheck |>
+  mutate(Date = dmy(Date),
+         Year = year(Date),
+         Year = as.factor(Year),
+         Average_bleaching = as.integer(Average_bleaching)) |> 
+  filter(Year %in% c("2015", "2016", "2017")) |>
+  mutate(Latitude_Range = ifelse(abs(Latitude.Degrees) >= 15 & abs(Latitude.Degrees) <= 20, "Midlatitude", "Other"))
+```
+
+### Visualise Coral Bleaching Percentages
+
+First, I created a new categorical variable to classify which reefs were located in this mid-latitude range of either *"15-20 degrees North"* or *"15-20 degrees South"*. Then, I wanted to visualise the average bleaching of the coral reefs over time to see if there appears to be a difference between the "mid-latitude" and "other" reefs. As you can see, it looks like there is more coral bleaching occuring in the reefs outside the specified region, contradictory to the claim made in the paper [@sully2019global].
+
+```{r, message=FALSE}
+# scatterplot to look at average bleaching in mid-lat vs other reefs
+
+bleach_plot = ggplot(reef, aes(x = Date, y = Average_bleaching, color = Latitude_Range)) +
+  geom_point() +
+  labs(title = "Coral Bleaching Probabilities of Mid-Latitude & Other Locations Over Time",
+       x = "Time (years)",
+       y = "Average Bleaching") +
+  scale_color_viridis(discrete = TRUE) +  
+  theme_minimal() +
+  theme(panel.background = element_rect(fill = "lightyellow", color = NA),
+        plot.background = element_rect(fill = "lightyellow", color = NA))
+
+ggplotly(bleach_plot, tooltip = c("x", "y", "fill"))    
+```
+
+### World Map of Coral Bleaching
+
+```{r, message=FALSE, warning=FALSE}
+# making the world map for coral bleaching over the years
+world_map = map_data("world")
+
+latBand <- tibble(
+  xmin = rep(-180, 2), xmax = rep(180, 2),
+  ymin = c(15, -20), ymax = c(20, -15)
+)
+
+plotMap = ggplot() +
+  geom_polygon(data = world_map, 
+               aes(x = long, 
+                   y = lat, 
+                   group = group), 
+               fill = "lightyellow", 
+               alpha = 0.8) +
+  geom_rect(data = latBand, 
+            aes(xmin = xmin, 
+                xmax = xmax, 
+                ymin = ymin, 
+                ymax = ymax), 
+            fill = "blue", 
+            alpha = 0.1) +
+  geom_point(data = reef, 
+             aes(x = Longitude.Degrees, 
+                 y = Latitude.Degrees, 
+                 size = Average_bleaching, 
+                 color = Average_bleaching, 
+                 frame = Year, 
+                 text = paste("Reef:", 
+                              Reef.Name, 
+                              "<br>Average Bleaching:", 
+                              Average_bleaching)), 
+             alpha = 0.7) +
+  scale_colour_viridis(option = "C") +
+  theme_void() +
+  labs(title = "Average Coral Bleaching From 2015-2017", x = NULL, y = NULL, 
+  color = "Bleaching (%)") +
+    theme(panel.background = element_rect(fill = "lightblue", color = NA),
+          plot.background = element_rect(fill = "lightblue", color = NA),
+          legend.text = element_text(size = 8),
+          legend.title = element_text(size = 10, face = "bold")
+          ) 
+
+mapInt = ggplotly(plotMap, tooltip = "text") |>
+  animation_opts(frame = 1000, transition = 500) |>
+  animation_slider(currentvalue = list(prefix = "Year: "))
+
+mapInt
+```
+:::
+
+# Part 2
+
+Hi Farhan! Wei told me all about your focus on the Great Barrier Reef (GBR) and using different environmental variables to predict future coral bleaching, how cool! I understand you're concerned with whether using data from 4 years prior to the 2015-2017 bleaching events might be more useful than data collected during the events. In that case, I will be creating 2 different models to predict bleaching category based on variables from these 2 time periods, using these variables you mentioned:
+
+-   Total Nitrogen
+-   pH
+-   Salt
+-   Algae
+-   Temperature
+
+## Approach - Random Forest
+
+::: panel-tabset
+### Data Preprocessing
+
+I cleaned and transformed the bleaching survey data, extracted the environmental variables from the NetCDF file and spatially joined based on proximity to create the final dataset `joined_df`. Then, I filtered bleaching category data for 2015-2017 $(n = 134)$, which was the only time period with bleaching data. For the second dataset, we joined the bleaching category data with variables from 4 years prior respectively (2011-2015, 2012-2016, 2013-2016) to create `old_joined`. The same libraries cited earlier were used in this stage, with the addition of 2 more:
+
+-   [@R-RColorBrewer]
+-   [@R-reshape2]
+
+```{r, message=FALSE, results='hide'}
+# read in csv data files
+bleachData <- read_csv("bleachingSurveys-1.csv")
+
+# # check structure for this data
+# colnames(bleachData)
+# dim(bleachData)
+# head(bleachData)
+
+# data cleaning & reformatting
+bleachData_clean = bleachData |> mutate(
+  year = factor(year), # 2015, 2016, 2017
+  bleachCat = factor(bleachCat, levels = c(0, 1, 2, 3, 4))
+) |>
+  filter(!is.na(bleachCat)) |>
+  na.omit()
+
+
+# read in the nc file
+eReefs_nc = ncdf4::nc_open(
+"https://thredds.ereefs.aims.gov.au/thredds/dodsC/
+GBR4_H2p0_B3p1_Cq3b_Dhnd/annual.nc?zc[1],
+latitude[0:1:722],longitude[0:1:490],
+temp[0:1:9][1][0:1:722][0:1:490],
+TOTAL_NITROGEN[0:1:9][1][0:1:722][0:1:490],
+MA_N[0:1:9][0:1:722][0:1:490],
+PH[0:1:9][1][0:1:722][0:1:490],
+salt[0:1:9][1][0:1:722][0:1:490],
+time[0:1:9]")
+#names(eReefs_nc$var)
+
+# extract variables from nc file
+
+# spatial data
+lat = ncdf4::ncvar_get(eReefs_nc, "latitude")
+long = ncdf4::ncvar_get(eReefs_nc, "longitude")
+
+# time
+time = ncdf4::ncvar_get(eReefs_nc, "time")
+tunits = ncdf4::ncatt_get(eReefs_nc, "time", "units")
+cf = CFtime::CFtime(tunits$value, calendar = "standard", time)
+timestamps = CFtime::as_timestamp(cf)
+timestamps = as.Date(timestamps, format = "%Y-%m-%d")
+
+
+# predictors
+total_nitrogen = ncdf4::ncvar_get(eReefs_nc, "TOTAL_NITROGEN")
+pH = ncdf4::ncvar_get(eReefs_nc, "PH")
+salt = ncdf4::ncvar_get(eReefs_nc, "salt")
+algae = ncdf4::ncvar_get(eReefs_nc, "MA_N")
+temp = ncdf4::ncvar_get(eReefs_nc, "temp")
+
+# # check
+# summary(total_nitrogen)
+# summary(pH)
+# summary(salt)
+# summary(algae)
+# summary(temp)
+
+# make a df for these extracted variables
+eReefs_df = expand.grid(long = long, lat = lat, time = timestamps) |>
+  mutate(
+    total_nitrogen = as.vector(total_nitrogen),
+    pH = as.vector(pH),
+    algae = as.vector(algae),
+    salt = as.vector(salt),
+    temp = as.vector(temp),
+         )
+
+# PELASE NOTE that i had to save joined data as a static file due to the long processing time of the st_join(), but the code i used to join the data is here and commented:
+
+# bleaching_sf = st_as_sf(bleachData_clean, coords = c("longitude", "latitude"), crs = 4326)
+# eReefs_sf = st_as_sf(eReefs_df, coords = c("long", "lat"), crs = 4326)
+# 
+# joined_sf = st_join(bleaching_sf, eReefs_sf, join = st_is_within_distance, dist = 1000, left = TRUE)
+
+# save as rdata file in case i can't load it again
+# full_joined = joined_sf |>
+#   as.data.frame()
+# 
+# save(full_joined, file = "joined_data.RData")
+
+load("joined_data.RData")
+
+# current data
+joined_df = full_joined |>
+  filter(year(surveyDate) == year(time)) |>
+  select(pH, total_nitrogen, algae, salt, temp, geometry, bleachCat) |>
+    filter(
+    !is.nan(pH),
+    !is.nan(total_nitrogen),
+    !is.nan(temp),
+    !is.nan(algae),
+    !is.nan(salt),
+    !is.nan(bleachCat))
+
+
+# old data & missing values
+old_joined = full_joined |>
+    filter(
+      (year(time) == 2011 & year(surveyDate) == 2015) |
+      (year(time) == 2012 & year(surveyDate) == 2016) |
+      (year(time) == 2013 & year(surveyDate) == 2017)) |>
+    select(pH, total_nitrogen, algae, salt, temp, geometry, bleachCat) |>
+    filter(
+    !is.nan(pH),
+    !is.nan(total_nitrogen),
+    !is.nan(temp),
+    !is.nan(algae),
+    !is.nan(salt),
+    !is.nan(bleachCat))
+  
+
+# missing values and such
+joined_df = joined_df |> filter(
+  !is.nan(pH),
+  !is.nan(total_nitrogen),
+  !is.nan(temp),
+  !is.nan(algae),
+  !is.nan(salt))
+```
+
+### EDA of Variables
+
+After looking at this correlation matrix heatmap, we may have to worry about the **multicollinearity** between some of our predictors. For example, `temperature` is highly negatively correlated with `pH` and `nitrogen` (where `pH` and `nitrogen` are also positively correlated). However, this is because these variables have biochemical relationships so it is expected that they correlate with each-other such as nitrogen and temperature [@alexandre2020ocean].
+
+```{r, message=FALSE}
+numeric_data = data.frame(
+  total_nitrogen = joined_df$total_nitrogen,
+  pH = joined_df$pH,
+  algae = joined_df$algae,
+  salt = joined_df$salt,
+  temp = joined_df$temp
+)
+
+cor_matrix = cor(numeric_data, use = "complete.obs")
+
+melted_cor_matrix <- melt(cor_matrix)
+melted_cor_matrix <- melted_cor_matrix[melted_cor_matrix$Var1 != melted_cor_matrix$Var2, ]
+melted_cor_matrix <- melted_cor_matrix[as.numeric(melted_cor_matrix$Var1) < as.numeric(melted_cor_matrix$Var2), ]
+
+corr_mat = ggplot(melted_cor_matrix, aes(Var1, Var2, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c(option = "D", limits = c(-1, 1)) +  # Use the viridis colour scale
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  coord_fixed() +
+  labs(x = "", y = "", title = "Correlation Matrix") +
+  theme(axis.text.x = element_text(size = 12), 
+        axis.text.y = element_text(size = 12),
+        panel.background = element_rect(fill = "lightyellow", color = NA),
+        plot.background = element_rect(fill = "lightyellow", color = NA))
+
+ggplotly(corr_mat)
+```
+
+Additionally, our target variable `bleaching category` which is an ordinal variable with 5 levels `(0, 1, 2, 3, 4)` has a small and discrete range, with the distribution appearing to look not normally distributed and more positively skewed. This may be due to the small range of the variable and the fact that coral bleaching isn't particularly wide-spread [@gbrmpa_coral_bleaching].
+
+```{r}
+bleach_hist = ggplot(joined_df, aes(x = factor(bleachCat))) +
+  geom_bar(fill = "#440154", color = "black") +
+  labs(title = "Bleach Category Distribution (2015-2017)",
+       x = "Bleaching Category", 
+       y = "Frequency") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.background = element_rect(fill = "lightyellow", color = NA),
+        plot.background = element_rect(fill = "lightyellow", color = NA)) +
+  scale_x_discrete(limits = c("0", "1", "2", "3", "4"))
+
+ggplotly(bleach_hist)
+```
+
+### RF Model - Contemprorary Variables
+
+Using the first dataset with the contemporary variables, we trained the first random forest classification model to predict bleaching category in 2015-2017. To compute the performance metrics, I implemented a 10-fold cross-validation; I went with 10-fold rather than 5-fold because our dataset was not very large (134 observations). 
+
+```{r message=FALSE, results='hide'}
+# RF model with contemporary data (2015-2017)
+set.seed(3888)
+
+modelVars = c("pH", "total_nitrogen", "algae", "salt", "temp", "bleachCat")
+modelDat_contemp = joined_df |> select(all_of(modelVars))
+
+n = nrow(modelDat_contemp)
+train_index = sample(1:n, size = 0.7 * n)
+
+training_data = modelDat_contemp[train_index, ]
+testing_data = modelDat_contemp[-train_index, ]
+
+# model
+rf_model = randomForest(
+  bleachCat ~ pH + total_nitrogen + algae + salt + temp, 
+  data = training_data,
+  ntree = 500,
+  importance = TRUE)
+y_pred = predict(rf_model, newdata = testing_data)
+
+# confmat
+unique_classes = sort(unique(modelDat_contemp$bleachCat))
+num_classes = length(unique_classes)
+cm_contemp = table(Predicted = y_pred, Actual = testing_data$bleachCat)
+full_cm = matrix(0, nrow = num_classes, 
+                  ncol = num_classes, 
+                  dimnames = list(unique_classes, unique_classes))
+full_cm[rownames(cm_contemp), colnames(cm_contemp)] <- cm_contemp
+cm_contemp = cm_contemp + full_cm
+
+```
+
+
+```{r, message=FALSE}
+# confmat
+kable(cm_contemp, caption = "10-Fold Confusion Matrix for RF (Contemporary Data)")
+
+```
+
+
+### RF Model - Old Variables
+
+Now using the dataset with the old variables (4 years prior), we trained the second random forest classification model to predict bleaching category in 2015-2017. To compute the performance metrics, I once again used a 10-fold cross-validation for the same reasons.
+
+```{r message=FALSE, results='hide'}
+# RF model with old data (2011-2013)
+set.seed(3888)
+
+modelVars = c("pH", "total_nitrogen", "algae", "salt", "temp", "bleachCat")
+modelDat_old = old_joined |> select(all_of(modelVars))
+
+n = nrow(modelDat_old)
+train_index = sample(1:n, size = 0.7 * n)
+
+training_data = modelDat_old[train_index, ]
+testing_data = modelDat_old[-train_index, ]
+
+# model
+rf_model = randomForest(
+  bleachCat ~ pH + total_nitrogen + algae + salt + temp, 
+  data = training_data,
+  ntree = 500,
+  importance = TRUE
+)
+y_pred = predict(rf_model, newdata = testing_data)
+
+# confmat
+unique_classes = sort(unique(modelDat_old$bleachCat))
+num_classes = length(unique_classes)
+cm_old = table(Predicted = y_pred, Actual = testing_data$bleachCat)
+full_cm = matrix(0, nrow = num_classes, 
+                  ncol = num_classes, 
+                  dimnames = list(unique_classes, unique_classes))
+full_cm[rownames(cm_old), colnames(cm_old)] <- cm_old
+cm_old = cm_old + full_cm
+
+```
+
+```{r, message=FALSE}
+# mean cofmat
+kable(cm_old, caption = "10-Fold Confusion Matrix for RF (Old Variables)")
+```
+
+
+
+### Model Comparisons
+
+Based on the performance metrics calculated, it seems that the model computed with the old variables performed worse than the model with contemporary variables, albeit not significantly better
+
+  - **Accuracy**: proportion of correct predictions: $\frac{TP+TN}{TP+TN+FP+FN}$
+  - **Precision**: precision of positive predictions that were correct; $\frac{TP}{TP+TN}$
+  - **Recall**: aka sensitivity, so proportion of true positives that were correctly identified: $\frac{TP}{TP+FP}$
+  - **F1**: a better accuracy metric for RF (and my `bleachCat` imbalanced dataset), synthesizes precision and recall to make an optimised metric; $\text{F1} = 2 \times \frac{\text{Precision} \times \text{Recall}}{\text{Precision} + \text{Recall}}$
+
+
+```{r, message=FALSE}
+# making a function that will calculate metrics
+calculate_metrics = function(cm) {
+  TP = diag(cm) # TPs are diagonal
+  FP = colSums(cm) - TP # FPs are column sums - diagonal
+  FN = rowSums(cm) - TP # FNs are row sums - diagonal
+  TN = sum(cm) - (TP + FP + FN) # TNs are the total sum - others
+  
+  accuracy = round(sum(TP) / sum(cm), 2)
+  precision = round(TP / (TP + FP), 2)
+  recall = round(TP / (TP + FN), 2)
+  f1 = round(2 * (precision * recall) / (precision + recall), 2)
+
+  metrics = data.frame(
+    Class = rownames(cm),
+    Precision = precision,
+    Recall = recall,
+    F1 = f1,
+    Accuracy = accuracy
+  )
+  
+  # Calculate column averages, excluding the "Class" column
+  col_averages = colMeans(metrics[, -1], na.rm = TRUE)  # Exclude the "Class" column
+  
+  # Add a row for averages at the bottom of the table
+  avg_row = c("Average", col_averages)
+  metrics = rbind(metrics, avg_row)
+  return(metrics)
+}
+
+metrics_contemp = calculate_metrics(cm_contemp)
+kable(metrics_contemp, caption = "Contemporary Model Metrics", row.names = FALSE)
+```
+
+```{r, message=FALSE}
+# old model metrics
+metrics_old = calculate_metrics(cm_old)
+kable(metrics_old, caption = "Old Model Metrics", row.names = FALSE)
+
+```
+:::
+
+## Evaluation
+
+Before we make our conclusion, there are some limitations to consider that need to be addressed;
+
+  - **Data Quality and Missing Values**: missing values in environmental variables were filtered, which reduced the sample size significantly and possibly introduced bias new sources of bias (sampling bias, imputation bias, etc.).
+
+   - **Random Forest**: although effective, RF models has its own limitations. It's "black box" nature makes it less interpretable than simpler models like logistic regression and RFs are also jsut prone to over-fitting. Other alternatives could be using support vector machines (SVM), neural networks or logistic regressions.
+
+## Conclusion
+
+In conclusion, the results point towards working with contemporary environmental variables as they provide a slightly better model for predicting coral bleaching than data from four years prior. It also makes more sense that this model would perform better as the data is collected in the same time as the bleaching data. So, real-time monitoring and immediate environmental conditions seem to be more crucial for prediction than historical trends alone. However, my filtered dataset was quite small so using a larger sample and even including more historical data (>4 years) could have made predictions better.
+
+However, my results are not the end all be all! Here are some recommendations for future directions:
+
+  - Additional predictors in models, such as climate anomalies (e.g., El Niño) and local reef characteristics to improve predictive accuracy.
+  - Compute multiple models from both datasets and see if model choice influenced results (comparing 2 models only may not have been sufficient)
+  - Including more data even if it had missing values (e.g. assigning averages to missing values, i=only excluding fully missing rows and duplicats, etc.)
+
+```{r, message=FALSE, results='hide'}
+ncdf4::nc_close(eReefs_nc)
+```

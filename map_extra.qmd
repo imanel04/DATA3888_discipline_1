@@ -1,0 +1,54 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+---
+
+```{r}
+
+```
+
+```{r}
+library(leaflet)
+
+lat_band = data.frame(
+  lat = c(15, 20, 20, 15, 15, -15, -20, -20, -15, -15),
+  long = c(-180, -180, 180, 180, -180, -180, -180, 180, 180, -180),
+  group = rep(c("North", "South"), each = 5)
+)
+
+color_palette = colorNumeric(palette = "viridis", domain = reef$Average_bleaching)
+
+leaflet_map = leaflet(reef) |>
+  addProviderTiles(providers$CartoDB.Positron) |>
+  addPolygons(data = lat_band, lat = ~lat, lng = ~long, 
+              fillColor = "blue", fillOpacity = 0.2, color = "transparent",
+              group = "Midlatitude (15-20 degrees N & S)") |>
+  addCircleMarkers(
+    ~Longitude.Degrees, ~Latitude.Degrees,
+    color = ~color_palette(Average_bleaching),
+    fillOpacity = 0.5,
+    popup = ~paste0(
+      "<b>Reef Name:</b> ", Reef.Name, "<br>",
+      "<b>Average Bleaching (%):</b> ", round(Average_bleaching, 2)
+    )) |>
+  addLegend(
+    "bottomright",
+    pal = color_palette,
+    values = reef$Average_bleaching,
+    title = "Average Bleaching (%)"
+  ) |>
+  addControl(
+    html = '<select id="yearSelect">
+              <option value="all">All Years</option>
+              <option value="2014">2014</option>
+              <option value="2015">2015</option>
+              <option value="2016">2016</option>
+              <option value="2017">2017</option>
+            </select>',
+    position = "topright"
+  )
+
+
+leaflet_map
+```

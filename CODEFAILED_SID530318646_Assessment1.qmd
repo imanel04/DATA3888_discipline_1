@@ -1,0 +1,263 @@
+---
+title: "Discipline Assessment 1 - Reef"
+author: "530318646"
+date: today
+repository: https://github.sydney.edu.au/ilat8407/DATA3888-discipline-1.git
+format: 
+  html:
+    embed-resources: true
+    code-fold: true
+    code-tools: true
+    theme: sandstone
+    fig_caption: yes
+    table-of-contents: true
+    toc: true
+    toc_depth: 4
+    toc_float: true
+execute:
+  echo: true
+  tidy: true
+number-sections: false
+bibliography: refs.bib
+---
+
+```{r setup, message=FALSE}
+library(tidyverse)
+library(tidyr)
+library(ggplot2)
+library(viridis)
+library(cvTools)
+library(dplyr)
+library(plotly)
+library(lubridate)
+library(ncdf4)
+library(CFtime)
+library(sf)
+library(caret)
+library(randomForest)
+# knitr::write_bib(c(.packages(),
+#                    "tidyverse", "ggplot2","dplyr", "plotly", "viridis",
+#                    "cvTools", "lubridate", "ncdf4", "CFtime", "sf", "caret",
+#                    "randomForest"), "refs.bib")
+```
+
+# Part 1
+
+Hi Wei! I heard you've recently been wrapped up with researching a recent global coral bleaching phenomenon and that you're hoping to study the environmental variables that may have triggered these unfortunate events.
+
+I've actually recently come across this public dataset recording the bleaching events at 3351 locations in 81 countries between 1998-2017, created by our friend Sully and colleagues [@sully2019global]. I was also having a look at the paper they published on this data, particularly this bold claim:
+
+> "The highest probability of coral bleaching occurred at tropical midlatitude sites (15–20 degrees north and south of the Equator).”
+
+So, according to them, coral reefs within these specified regions had a higher likelihood of coral bleaching, represented as `Average_Bleaching (%)` in their data. The implications are quite significant, so I want to explore this using their data because, particularly data from 2014-2017.
+
+## Approach
+
+::: panel-tabset
+### Data Cleaning
+
+All coding was done in *R Version 4.4.1* [@R-base]. Additionally, data cleaning, modelling and visualisations were done using a combination of *Base R* and functions from the following packages;
+
+-   *tidyverse* [@R-tidyverse]
+-   *viridis* [@R-viridis]
+-   *ggplot2* [@R-ggplot2]
+-   *plotly* [@R-plotly]
+-   *caret* [@R-caret]
+-   *CFtime* [@R-CFtime]
+-   *cvTools* [@R-cvTools]
+-   *dplyr* [@R-dplyr]
+-   *lubridate* [@R-lubridate]
+-   *ncdf4* [@R-ncdf4]
+-   *randomForest* [@R-randomForest]
+-   *sf* [@R-sf]
+-   *stringr* [@R-stringr]
+-   *tidyr* [@R-tidyr]
+
+```{r, message=FALSE}
+# read in csv data files
+reefCheck <- read_csv("Reef_Check_with_cortad_variables_with_annual_rate_of_SST_change.csv")
+
+# # check structure & stuff
+# str(reefCheck)
+# dim(reefCheck)
+# head(reefCheck)
+
+# data variables cleaning & reformatting
+reef = reefCheck |>
+  mutate(Date = dmy(Date),
+         Year = year(Date),
+         Year = as.factor(Year),
+         Average_bleaching = as.integer(Average_bleaching)) |> 
+  filter(Year %in% c("2014", "2015", "2016", "2017")) |>
+  mutate(Latitude_Range = ifelse(abs(Latitude.Degrees) >= 15 & abs(Latitude.Degrees) <= 20, "Midlatitude", "Other"))
+```
+
+### Visualise Coral Bleaching Percentages
+
+First, I created a new categorical variable to classify which
+
+```{r, message=FALSE}
+# scatterplot to look at average bleaching in mid-lat vs other reefs
+bleach_plot <- ggplot(reef, aes(x = Date, y = Average_bleaching, color = Latitude_Range)) +
+  geom_point() +
+  labs(title = "Coral Bleaching Probabilities of Mid-Latitude & Other Locations by Year",
+       x = "Year",
+       y = "Average Bleaching") +
+  scale_color_viridis(discrete = TRUE) +  
+  theme_minimal()
+
+ggplotly(bleach_plot, tooltip = c("x", "y", "fill"))
+
+```
+
+### World Map of Coral Bleaching
+
+```{r, message=FALSE, warning=FALSE}
+# making the world map for coral bleaching over the years
+world_map = map_data("world")
+
+latBand <- tibble(
+  xmin = rep(-180, 2), xmax = rep(180, 2),
+  ymin = c(15, -20), ymax = c(20, -15)
+)
+
+plotMap = ggplot() +
+  geom_polygon(data = world_map, 
+               aes(x = long, 
+                   y = lat, 
+                   group = group), 
+               fill = "lightyellow", 
+               alpha = 0.8) +
+  geom_rect(data = latBand, 
+            aes(xmin = xmin, 
+                xmax = xmax, 
+                ymin = ymin, 
+                ymax = ymax), 
+            fill = "blue", 
+            alpha = 0.1) +
+  geom_point(data = reef, 
+             aes(x = Longitude.Degrees, 
+                 y = Latitude.Degrees, 
+                 size = Average_bleaching, 
+                 color = Average_bleaching, 
+                 frame = Year, 
+                 text = paste("Reef:", 
+                              Reef.Name, 
+                              "<br>Average Bleaching:", 
+                              Average_bleaching)), 
+             alpha = 0.7) +
+  scale_colour_viridis(option = "C") +
+  theme_void() +
+  labs(title = "Average Coral Bleaching From 2014-2017", x = NULL, y = NULL) +
+    theme(panel.background = element_rect(fill = "lightblue", color = NA))
+
+mapInt = ggplotly(plotMap, tooltip = "text") |>
+  animation_opts(frame = 1000, transition = 500) |>
+  animation_slider(currentvalue = list(prefix = "Year: "))
+
+mapInt
+```
+:::
+
+# Part 2
+
+Hi Farhan! Wei told me all about your focus on the Great Barrier Reef (GBR) and using different environmental variables to predict future coral bleaching, how cool! I understand you're concerned with whether using data from 4 years prior to the 2015-2017 bleaching events might be more useful than data collected during the events. In that case, I will be creating 2 predictive models from these 2 time periods, using these variables you mentioned:
+
+-   Total Nitrogen
+-   Salt
+-   Algae
+-   Temperature
+
+## Approach
+
+::: panel-tabset
+### Data Cleaning
+
+The
+
+```{r}
+# read in csv data files
+bleachData <- read_csv("bleachingSurveys-1.csv")
+
+# # check structure for this data
+colnames(bleachData)
+# dim(bleachData)
+# head(bleachData)
+
+# data cleaning & reformatting
+bleachData_clean = bleachData |> mutate(
+  year = factor(year), # 2015, 2016, 2017
+  bleachCat = factor(bleachCat, levels = c(0, 1, 2, 3, 4))
+) |>
+  filter(!is.na(bleachCat)) |>
+  na.omit()
+
+
+# read in the nc file
+eReefs_nc = ncdf4::nc_open(
+"https://thredds.ereefs.aims.gov.au/thredds/dodsC/
+GBR4_H2p0_B3p1_Cq3b_Dhnd/annual.nc?zc[1],
+latitude[0:1:722],longitude[0:1:490],
+temp[0:1:9][1][0:1:722][0:1:490],
+TOTAL_NITROGEN[0:1:9][1][0:1:722][0:1:490],
+MA_N[0:1:9][0:1:722][0:1:490],
+PH[0:1:9][1][0:1:722][0:1:490],
+salt[0:1:9][1][0:1:722][0:1:490],
+time[0:1:9]")
+
+# extract variables from nc file
+lat = ncdf4::ncvar_get(eReefs_nc, "latitude")
+long = ncdf4::ncvar_get(eReefs_nc, "longitude")
+time = ncdf4::ncvar_get(eReefs_nc, "time")
+tunits = ncdf4::ncatt_get(eReefs_nc, "time", "units")
+cf = CFtime::CFtime(tunits$value, calendar = "standard", time)
+```
+
+### EDA of Variables
+
+```{r}
+# visualise bleaching data over years
+bleachData_clean |> ggplot(aes(x = year, fill = bleachCat)) +
+  geom_bar(position = position_fill(reverse = TRUE)) + 
+  scale_fill_viridis_d() +
+  theme_classic()
+
+
+# map of reefs
+world = map_data("world")
+
+ausMap = ggplot() +
+  geom_polygon(
+    data = world,
+    aes(x = long, y = lat, group = group),
+    fill = "grey",
+    alpha = 0.5
+  ) +
+  coord_cartesian(xlim = range(bleachData_clean$longitude),
+                  ylim = range(bleachData_clean$latitude))
+
+ausMap +
+  geom_point(
+    data = bleachData_clean,
+    aes(x = longitude, y = latitude)
+  ) +  
+  labs(x = "Longitude", y = "Latitude") +
+  theme_minimal()
+```
+
+```{r}
+# let's make the average bleaching variable into a binary variable; 1 = bleaching, 0 = no bleaching
+
+
+# build classification model (I'm going with a 70:30 train:test)
+set.seed(3888)
+test_id = sample(1:nrow(reefClean), round(nrow(reefClean)*0.3))
+training_data <- reefClean[-test_id,]
+testing_data <- reefClean[test_id,]
+
+X_train <- training_data %>% select(-Average_bleaching)
+X_test <- testing_data %>% select(-Average_bleaching)
+y_train <- training_data$Average_bleaching
+y_test <- testing_data$Average_bleaching
+```
+:::
